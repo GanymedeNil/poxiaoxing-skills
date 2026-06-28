@@ -1,0 +1,4 @@
+interface:
+  display_name: "抖音博主分析"
+  short_description: "采集抖音博主作品，下载视频、抽帧、转写字幕并整理素材"
+  default_prompt: "Use $douyin-blogger-analysis to collect a Douyin creator profile, download videos, extract screenshots, and transcribe subtitles."
