@@ -4,6 +4,9 @@
 
 - `douyin-blogger-analysis`：抖音博主分析工具。它会采集博主作品数据、下载视频、抽取视频截图，并可选用 DashScope FunASR 转写字幕。
 
+# 转文本能力配置视频教程
+链接：https://pan.quark.cn/s/3bd8793a40d3
+
 ## 目录结构
 
 ```text
