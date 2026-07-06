@@ -16,11 +16,10 @@ from typing import Any
 
 import aiohttp
 
-DASHSCOPE_API_PATH = "/api/v1/services/aigc/multimodal-generation/generation"
-DASHSCOPE_DEFAULT_REGION = "cn-beijing"
-DASHSCOPE_DEFAULT_MODEL = "fun-asr-flash-2026-06-15"
-DASHSCOPE_AUDIO_FORMAT = "mp3"
-DASHSCOPE_AUDIO_SAMPLE_RATE = "16000"
+AURALWISE_DEFAULT_BASE_URL = "https://api.auralwise.cn/v1"
+AURALWISE_AUDIO_FORMAT = "mp3"
+AURALWISE_AUDIO_SAMPLE_RATE = "16000"
+AURALWISE_PROVIDER = "auralwise"
 DEFAULT_REQUEST_INTERVAL_SECONDS = 5.0
 AudioExtractor = Callable[[Path, Path], None]
 
@@ -54,13 +53,13 @@ def default_tasks_file(input_path: Path) -> Path:
 
 def load_task_state(tasks_file: Path) -> dict[str, Any]:
     if not tasks_file.exists():
-        return {"version": 1, "provider": "dashscope-fun-asr", "tasks": []}
+        return {"version": 1, "provider": AURALWISE_PROVIDER, "tasks": []}
     return json.loads(tasks_file.read_text(encoding="utf-8"))
 
 
 def save_task_state(tasks_file: Path, state: dict[str, Any]) -> None:
     tasks_file.parent.mkdir(parents=True, exist_ok=True)
-    state["provider"] = "dashscope-fun-asr"
+    state["provider"] = AURALWISE_PROVIDER
     tasks_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -85,40 +84,28 @@ def build_audio_extract_command(video_path: Path, audio_path: Path, *, ffmpeg_bi
         "-ac",
         "1",
         "-ar",
-        DASHSCOPE_AUDIO_SAMPLE_RATE,
+        AURALWISE_AUDIO_SAMPLE_RATE,
         "-f",
-        DASHSCOPE_AUDIO_FORMAT,
+        AURALWISE_AUDIO_FORMAT,
         str(audio_path),
     ]
 
 
-def build_dashscope_url(workspace_id: str, *, region: str = DASHSCOPE_DEFAULT_REGION) -> str:
-    return f"https://{workspace_id}.{region}.maas.aliyuncs.com{DASHSCOPE_API_PATH}"
-
-
-def build_generation_payload(audio_path: Path, *, model: str = DASHSCOPE_DEFAULT_MODEL) -> dict[str, Any]:
+def build_task_payload(
+    audio_path: Path,
+    *,
+    audio_filename: str | None = None,
+    optimize: bool = True,
+) -> dict[str, Any]:
     base64_str = base64.b64encode(audio_path.read_bytes()).decode("ascii")
-    data_uri = f"data:audio/{DASHSCOPE_AUDIO_FORMAT};base64,{base64_str}"
     return {
-        "model": model,
-        "input": {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_audio",
-                            "input_audio": {
-                                "data": data_uri,
-                            },
-                        }
-                    ],
-                }
-            ]
-        },
-        "parameters": {
-            "format": DASHSCOPE_AUDIO_FORMAT,
-            "sample_rate": DASHSCOPE_AUDIO_SAMPLE_RATE,
+        "audio_base64": base64_str,
+        "audio_filename": audio_filename or audio_path.name,
+        "options": {
+            "enable_asr": True,
+            "enable_diarize": False,
+            "enable_audio_events": False,
+            "optimize": optimize,
         },
     }
 
@@ -138,68 +125,58 @@ def format_srt_timestamp_ms(milliseconds_total: int) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{milliseconds:03d}"
 
 
-def _dashscope_sentences(result: dict[str, Any]) -> list[dict[str, Any]]:
-    sentence = result.get("output", {}).get("sentence")
-    if isinstance(sentence, dict):
-        return [sentence]
-    if isinstance(sentence, list):
-        return [item for item in sentence if isinstance(item, dict)]
+def _auralwise_segments(result: dict[str, Any]) -> list[dict[str, Any]]:
+    segments = result.get("segments")
+    if isinstance(segments, list):
+        return [item for item in segments if isinstance(item, dict)]
     return []
 
 
 def segments_to_srt(result: dict[str, Any]) -> str:
     blocks: list[str] = []
-    for index, sentence in enumerate(_dashscope_sentences(result), start=1):
-        text = str(sentence.get("text") or "").strip()
+    for index, segment in enumerate(_auralwise_segments(result), start=1):
+        text = str(segment.get("text") or "").strip()
         if not text:
             continue
-        start = format_srt_timestamp_ms(int(sentence.get("begin_time") or 0))
-        end = format_srt_timestamp_ms(int(sentence.get("end_time") or sentence.get("begin_time") or 0))
+        start_seconds = float(segment.get("start") or 0)
+        end_seconds = float(segment.get("end") or segment.get("start") or 0)
+        start = format_srt_timestamp_ms(int(start_seconds * 1000))
+        end = format_srt_timestamp_ms(int(end_seconds * 1000))
         blocks.append(f"{index}\n{start} --> {end}\n{text}")
 
     if not blocks:
-        text = str(result.get("output", {}).get("text") or "").strip()
+        text = str(result.get("text") or "").strip()
         if text:
-            duration_seconds = float(result.get("usage", {}).get("duration") or 0)
+            duration_seconds = float(result.get("audio_duration") or 0)
             blocks.append(f"1\n00:00:00,000 --> {format_srt_timestamp(duration_seconds)}\n{text}")
 
     return "\n\n".join(blocks) + ("\n" if blocks else "")
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Transcribe video audio into subtitles using DashScope FunASR.")
+    parser = argparse.ArgumentParser(description="Transcribe video audio into subtitles using AuralWise.")
     parser.add_argument("input_path", type=Path, help="A video file or directory containing downloaded video.mp4 files.")
     parser.add_argument(
         "--api-key",
-        default=os.environ.get("DASHSCOPE_API_KEY"),
-        help="DashScope API key. Defaults to DASHSCOPE_API_KEY.",
-    )
-    parser.add_argument(
-        "--workspace-id",
-        default=os.environ.get("DASHSCOPE_WORKSPACE_ID"),
-        help="DashScope workspace ID used in https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com. Defaults to DASHSCOPE_WORKSPACE_ID.",
+        default=os.environ.get("AURALWISE_API_KEY"),
+        help="AuralWise API key. Defaults to AURALWISE_API_KEY.",
     )
     parser.add_argument(
         "--base-url",
-        default=os.environ.get("DASHSCOPE_BASE_URL"),
-        help="Full DashScope multimodal generation endpoint. Overrides --workspace-id.",
-    )
-    parser.add_argument(
-        "--model",
-        default=os.environ.get("DASHSCOPE_ASR_MODEL", DASHSCOPE_DEFAULT_MODEL),
-        help=f"DashScope ASR model. Defaults to {DASHSCOPE_DEFAULT_MODEL}.",
+        default=os.environ.get("AURALWISE_BASE_URL", AURALWISE_DEFAULT_BASE_URL),
+        help=f"AuralWise API base URL. Defaults to {AURALWISE_DEFAULT_BASE_URL}.",
     )
     parser.add_argument(
         "--request-interval",
         type=positive_float,
         default=DEFAULT_REQUEST_INTERVAL_SECONDS,
-        help="Seconds between DashScope requests. Defaults to 5.",
+        help="Seconds between AuralWise task submissions. Defaults to 5.",
     )
     parser.add_argument(
         "--poll-interval",
         type=positive_float,
         default=5.0,
-        help="Accepted for wrapper compatibility; DashScope FunASR returns synchronously.",
+        help="Seconds between AuralWise task status polls. Defaults to 5.",
     )
     parser.add_argument(
         "--ffmpeg-bin",
@@ -211,41 +188,100 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Regenerate subtitles even when subtitles.srt already exists.",
     )
+    parser.add_argument(
+        "--optimize",
+        dest="optimize",
+        action="store_true",
+        default=True,
+        help="Use AuralWise optimized mode when supported. Enabled by default.",
+    )
+    parser.add_argument(
+        "--no-optimize",
+        dest="optimize",
+        action="store_false",
+        help="Disable AuralWise optimized mode.",
+    )
     return parser.parse_args()
 
 
-class DashScopeClient:
+class AuralWiseClient:
     def __init__(
         self,
         api_key: str,
         *,
-        workspace_id: str | None = None,
-        base_url: str | None = None,
-        model: str = DASHSCOPE_DEFAULT_MODEL,
+        base_url: str = AURALWISE_DEFAULT_BASE_URL,
     ) -> None:
-        if not base_url and not workspace_id:
-            raise ValueError("DashScope workspace ID is required unless --base-url is provided.")
         self.api_key = api_key
-        self.base_url = (base_url or build_dashscope_url(str(workspace_id))).rstrip("/")
-        self.model = model
+        self.base_url = base_url.rstrip("/")
 
     def _headers(self) -> dict[str, str]:
         return {
-            "Authorization": f"Bearer {self.api_key}",
+            "X-API-Key": self.api_key,
             "Content-Type": "application/json",
-            "X-DashScope-SSE": "disable",
         }
 
-    async def transcribe(self, session: aiohttp.ClientSession, audio_path: Path) -> dict[str, Any]:
-        payload = build_generation_payload(audio_path, model=self.model)
-        async with session.post(self.base_url, headers=self._headers(), json=payload) as response:
+    async def create_task(
+        self,
+        session: aiohttp.ClientSession,
+        audio_path: Path,
+        *,
+        audio_filename: str | None = None,
+        optimize: bool = True,
+    ) -> dict[str, Any]:
+        payload = build_task_payload(audio_path, audio_filename=audio_filename, optimize=optimize)
+        async with session.post(f"{self.base_url}/tasks", headers=self._headers(), json=payload) as response:
             body = await response.text()
             if response.status >= 400:
-                raise RuntimeError(f"DashScope API {response.status}: {body}")
+                raise RuntimeError(f"AuralWise create task API {response.status}: {body}")
             data = json.loads(body)
-            if "output" not in data:
-                raise RuntimeError(f"DashScope response missing output: {body}")
+            if "id" not in data:
+                raise RuntimeError(f"AuralWise create task response missing id: {body}")
             return data
+
+    async def get_task(self, session: aiohttp.ClientSession, task_id: str) -> dict[str, Any]:
+        async with session.get(f"{self.base_url}/tasks/{task_id}", headers=self._headers()) as response:
+            body = await response.text()
+            if response.status >= 400:
+                raise RuntimeError(f"AuralWise task status API {response.status}: {body}")
+            return json.loads(body)
+
+    async def get_result(self, session: aiohttp.ClientSession, task_id: str) -> dict[str, Any]:
+        async with session.get(f"{self.base_url}/tasks/{task_id}/result", headers=self._headers()) as response:
+            body = await response.text()
+            if response.status >= 400:
+                raise RuntimeError(f"AuralWise task result API {response.status}: {body}")
+            data = json.loads(body)
+            if "segments" not in data:
+                raise RuntimeError(f"AuralWise result response missing segments: {body}")
+            return data
+
+    async def transcribe(
+        self,
+        session: aiohttp.ClientSession,
+        audio_path: Path,
+        *,
+        audio_filename: str | None = None,
+        optimize: bool = True,
+        poll_interval: float = 5.0,
+    ) -> dict[str, Any]:
+        task = await self.create_task(
+            session,
+            audio_path,
+            audio_filename=audio_filename,
+            optimize=optimize,
+        )
+        task_id = str(task["id"])
+        while True:
+            current = await self.get_task(session, task_id)
+            status = current.get("status")
+            if status == "done":
+                result = await self.get_result(session, task_id)
+                result.setdefault("task_id", task_id)
+                return result
+            if status in {"failed", "abandoned"}:
+                error = current.get("error_message") or "unknown error"
+                raise RuntimeError(f"AuralWise task {task_id} {status}: {error}")
+            await asyncio.sleep(poll_interval)
 
 
 def extract_audio(video_path: Path, audio_path: Path, *, ffmpeg_bin: str) -> None:
@@ -261,10 +297,12 @@ def _safe_audio_name(video_path: Path, index: int) -> str:
 
 async def transcribe_video(
     video_path: Path,
-    client: DashScopeClient,
+    client: AuralWiseClient,
     *,
     ffmpeg_bin: str,
     overwrite: bool,
+    poll_interval: float = 5.0,
+    optimize: bool = True,
 ) -> bool:
     subtitle_path = video_path.parent / "subtitles.srt"
     transcript_path = video_path.parent / "transcript.json"
@@ -276,7 +314,13 @@ async def transcribe_video(
         audio_path = Path(tmp_dir) / f"{video_path.stem}.mp3"
         extract_audio(video_path, audio_path, ffmpeg_bin=ffmpeg_bin)
         async with aiohttp.ClientSession() as session:
-            result = await client.transcribe(session, audio_path)
+            result = await client.transcribe(
+                session,
+                audio_path,
+                audio_filename=audio_path.name,
+                poll_interval=poll_interval,
+                optimize=optimize,
+            )
 
     transcript_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     subtitle_path.write_text(segments_to_srt(result), encoding="utf-8")
@@ -286,11 +330,13 @@ async def transcribe_video(
 
 async def transcribe_videos_batch(
     video_files: list[Path],
-    client: DashScopeClient,
+    client: AuralWiseClient,
     *,
     request_interval: float,
+    poll_interval: float,
     ffmpeg_bin: str,
     overwrite: bool,
+    optimize: bool,
     tasks_file: Path,
     audio_extractor: Callable[..., None] = extract_audio,
     sleep_func: Callable[[float], Any] = asyncio.sleep,
@@ -328,15 +374,14 @@ async def transcribe_videos_batch(
                     task = {
                         "video_path": str(video_path),
                         "audio_filename": audio_path.name,
-                        "provider": "dashscope-fun-asr",
-                        "model": client.model,
+                        "provider": AURALWISE_PROVIDER,
                         "status": "preparing_audio",
                         "submitted_at": None,
                         "updated_at": now,
                         "result_written": False,
                         "subtitle_path": str(subtitle_path),
                         "transcript_path": str(transcript_path),
-                        "request_id": None,
+                        "task_id": None,
                         "error_message": None,
                     }
                     state.setdefault("tasks", []).append(task)
@@ -350,12 +395,18 @@ async def transcribe_videos_batch(
                     task["updated_at"] = utc_now_iso()
                     save_task_state(tasks_file, state)
 
-                    result = await client.transcribe(session, audio_path)
+                    result = await client.transcribe(
+                        session,
+                        audio_path,
+                        audio_filename=audio_path.name,
+                        poll_interval=poll_interval,
+                        optimize=optimize,
+                    )
                     summary["submitted"] += 1
                     transcript_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
                     subtitle_path.write_text(segments_to_srt(result), encoding="utf-8")
                     task["status"] = "done"
-                    task["request_id"] = result.get("request_id")
+                    task["task_id"] = result.get("task_id")
                     task["result_written"] = True
                     task["error_message"] = None
                     task["updated_at"] = utc_now_iso()
@@ -376,9 +427,7 @@ async def transcribe_videos_batch(
 async def main_async() -> None:
     args = parse_args()
     if not args.api_key:
-        raise SystemExit("Missing DashScope API key. Set DASHSCOPE_API_KEY or pass --api-key.")
-    if not args.workspace_id and not args.base_url:
-        raise SystemExit("Missing DashScope workspace ID. Set DASHSCOPE_WORKSPACE_ID, pass --workspace-id, or pass --base-url.")
+        raise SystemExit("Missing AuralWise API key. Set AURALWISE_API_KEY or pass --api-key.")
     if not args.input_path.exists():
         raise SystemExit(f"Input path does not exist: {args.input_path}")
     if shutil.which(args.ffmpeg_bin) is None:
@@ -388,13 +437,15 @@ async def main_async() -> None:
     if not video_files:
         raise SystemExit(f"No video files found under: {args.input_path}")
 
-    client = DashScopeClient(args.api_key, workspace_id=args.workspace_id, base_url=args.base_url, model=args.model)
+    client = AuralWiseClient(args.api_key, base_url=args.base_url)
     summary = await transcribe_videos_batch(
         video_files,
         client,
         request_interval=args.request_interval,
+        poll_interval=args.poll_interval,
         ffmpeg_bin=args.ffmpeg_bin,
         overwrite=args.overwrite,
+        optimize=args.optimize,
         tasks_file=default_tasks_file(args.input_path),
     )
 

@@ -17,9 +17,9 @@ REQUIRED_SCRIPTS = {
     "subtitles": Path("scripts/transcribe_video_subtitles.py"),
 }
 BUNDLED_PROJECT_ROOT = Path(__file__).resolve().parents[1] / "assets" / "douyin-agent"
-DASHSCOPE_NO_CONFIG_GUIDANCE = (
-    "Subtitle transcription now uses DashScope FunASR. Set DASHSCOPE_API_KEY and DASHSCOPE_WORKSPACE_ID, "
-    "or pass --api-key plus --workspace-id. You can also pass --base-url to use a full custom endpoint."
+AURALWISE_NO_CONFIG_GUIDANCE = (
+    "Subtitle transcription now uses AuralWise. Set AURALWISE_API_KEY, or pass --api-key. "
+    "You can also set AURALWISE_BASE_URL or pass --base-url to override the API base URL."
 )
 
 
@@ -53,15 +53,13 @@ def run_capture(command: list[str], *, cwd: Path, dry_run: bool = False) -> subp
     return subprocess.run(command, cwd=cwd, text=True, capture_output=True, check=True)
 
 
-def has_dashscope_config(args: argparse.Namespace | None = None) -> bool:
-    api_key = (getattr(args, "api_key", None) if args else None) or os.environ.get("DASHSCOPE_API_KEY")
-    workspace_id = (getattr(args, "workspace_id", None) if args else None) or os.environ.get("DASHSCOPE_WORKSPACE_ID")
-    base_url = (getattr(args, "base_url", None) if args else None) or os.environ.get("DASHSCOPE_BASE_URL")
-    return bool(api_key and (workspace_id or base_url))
+def has_auralwise_config(args: argparse.Namespace | None = None) -> bool:
+    api_key = (getattr(args, "api_key", None) if args else None) or os.environ.get("AURALWISE_API_KEY")
+    return bool(api_key)
 
 
-def print_dashscope_no_config_guidance() -> None:
-    print(DASHSCOPE_NO_CONFIG_GUIDANCE, file=sys.stderr)
+def print_auralwise_no_config_guidance() -> None:
+    print(AURALWISE_NO_CONFIG_GUIDANCE, file=sys.stderr)
 
 
 def uv_python(script: Path, *args: str) -> list[str]:
@@ -91,8 +89,8 @@ def ensure_setup(args: argparse.Namespace) -> None:
     print(f"Output working directory: {workdir(args.workdir)}", file=sys.stderr)
     print(f"Douyin Chrome profile: {chrome_profile}", file=sys.stderr)
 
-    if not has_dashscope_config():
-        print_dashscope_no_config_guidance()
+    if not has_auralwise_config():
+        print_auralwise_no_config_guidance()
 
     if failures:
         for failure in failures:
@@ -154,22 +152,20 @@ def screenshots(args: argparse.Namespace) -> None:
 
 def subtitles(args: argparse.Namespace) -> None:
     root = project_root(args.project_root)
-    if not has_dashscope_config(args):
-        print_dashscope_no_config_guidance()
+    if not has_auralwise_config(args):
+        print_auralwise_no_config_guidance()
         if not args.dry_run:
             raise SystemExit(1)
     command = uv_python_for(root, REQUIRED_SCRIPTS["subtitles"], str(args.channel_dir))
     if args.api_key:
         command.extend(["--api-key", args.api_key])
-    if getattr(args, "workspace_id", None):
-        command.extend(["--workspace-id", args.workspace_id])
     if getattr(args, "base_url", None):
         command.extend(["--base-url", args.base_url])
-    if getattr(args, "model", None):
-        command.extend(["--model", args.model])
     if args.ffmpeg_bin:
         command.extend(["--ffmpeg-bin", args.ffmpeg_bin])
     command.extend(["--request-interval", str(args.request_interval), "--poll-interval", str(args.poll_interval)])
+    if not getattr(args, "optimize", True):
+        command.append("--no-optimize")
     if args.overwrite:
         command.append("--overwrite")
     run_command(command, cwd=workdir(args.workdir), dry_run=args.dry_run)
@@ -230,12 +226,11 @@ def pipeline(args: argparse.Namespace) -> None:
             workdir=args.workdir,
             channel_dir=channel_dir,
             api_key=args.api_key,
-            workspace_id=args.workspace_id,
             base_url=args.base_url,
-            model=args.model,
             ffmpeg_bin=args.ffmpeg_bin,
             request_interval=args.request_interval,
             poll_interval=args.poll_interval,
+            optimize=args.optimize,
             overwrite=args.overwrite,
             dry_run=args.dry_run,
         )
@@ -294,16 +289,16 @@ def build_parser() -> argparse.ArgumentParser:
     screenshot_parser.add_argument("--overwrite", action="store_true")
     screenshot_parser.set_defaults(func=screenshots)
 
-    subtitle_parser = subparsers.add_parser("subtitles", help="Transcribe downloaded videos with DashScope FunASR.")
+    subtitle_parser = subparsers.add_parser("subtitles", help="Transcribe downloaded videos with AuralWise.")
     add_common(subtitle_parser)
     subtitle_parser.add_argument("--channel-dir", type=Path, required=True)
-    subtitle_parser.add_argument("--api-key", help="DashScope API key. Defaults to DASHSCOPE_API_KEY in the bundled script.")
-    subtitle_parser.add_argument("--workspace-id", help="DashScope workspace ID. Defaults to DASHSCOPE_WORKSPACE_ID in the bundled script.")
-    subtitle_parser.add_argument("--base-url", help="Full DashScope endpoint. Overrides workspace ID in the bundled script.")
-    subtitle_parser.add_argument("--model", help="DashScope ASR model. Defaults to fun-asr-flash-2026-06-15.")
+    subtitle_parser.add_argument("--api-key", help="AuralWise API key. Defaults to AURALWISE_API_KEY in the bundled script.")
+    subtitle_parser.add_argument("--base-url", help="AuralWise API base URL. Defaults to https://api.auralwise.cn/v1.")
     subtitle_parser.add_argument("--ffmpeg-bin", default="ffmpeg")
     subtitle_parser.add_argument("--request-interval", type=float, default=5.0)
-    subtitle_parser.add_argument("--poll-interval", type=float, default=5.0, help="Accepted for compatibility; DashScope returns synchronously.")
+    subtitle_parser.add_argument("--poll-interval", type=float, default=5.0, help="Seconds between AuralWise task status polls.")
+    subtitle_parser.add_argument("--optimize", dest="optimize", action="store_true", default=True)
+    subtitle_parser.add_argument("--no-optimize", dest="optimize", action="store_false")
     subtitle_parser.add_argument("--overwrite", action="store_true")
     subtitle_parser.set_defaults(func=subtitles)
 
@@ -328,12 +323,12 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline_parser.add_argument("--interval", type=float, default=1.0)
     pipeline_parser.add_argument("--duration", type=float, default=5.0)
     pipeline_parser.add_argument("--ffmpeg-bin", default="ffmpeg")
-    pipeline_parser.add_argument("--api-key", help="DashScope API key. Defaults to DASHSCOPE_API_KEY in the bundled script.")
-    pipeline_parser.add_argument("--workspace-id", help="DashScope workspace ID. Defaults to DASHSCOPE_WORKSPACE_ID in the bundled script.")
-    pipeline_parser.add_argument("--base-url", help="Full DashScope endpoint. Overrides workspace ID in the bundled script.")
-    pipeline_parser.add_argument("--model", help="DashScope ASR model. Defaults to fun-asr-flash-2026-06-15.")
+    pipeline_parser.add_argument("--api-key", help="AuralWise API key. Defaults to AURALWISE_API_KEY in the bundled script.")
+    pipeline_parser.add_argument("--base-url", help="AuralWise API base URL. Defaults to https://api.auralwise.cn/v1.")
     pipeline_parser.add_argument("--request-interval", type=float, default=5.0)
     pipeline_parser.add_argument("--poll-interval", type=float, default=5.0)
+    pipeline_parser.add_argument("--optimize", dest="optimize", action="store_true", default=True)
+    pipeline_parser.add_argument("--no-optimize", dest="optimize", action="store_false")
     pipeline_parser.add_argument("--overwrite", action="store_true")
     pipeline_parser.add_argument("--with-subtitles", action="store_true")
     pipeline_parser.add_argument("--skip-collect", action="store_true")
