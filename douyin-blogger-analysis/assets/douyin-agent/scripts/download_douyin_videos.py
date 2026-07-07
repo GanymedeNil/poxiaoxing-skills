@@ -17,7 +17,7 @@ PROGRESS_BAR_WIDTH = 20
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Download videos from collected Douyin aweme posts.")
+    parser = argparse.ArgumentParser(description="Download media from collected Douyin aweme posts.")
     parser.add_argument("input_json", type=Path, help="Path to a collected douyin_posts.json file.")
     parser.add_argument(
         "--output-dir",
@@ -35,7 +35,7 @@ def parse_args() -> argparse.Namespace:
         "--limit",
         type=int,
         default=10,
-        help="Maximum number of newest videos to download. Use 0 to download all videos.",
+        help="Maximum number of newest media items to download. Use 0 to download all items.",
     )
     return parser.parse_args()
 
@@ -57,9 +57,15 @@ def _apply_download_limit(aweme_list: list[dict[str, Any]], limit: int) -> list[
 
 
 def _print_download_summary(result: DownloadResult) -> None:
+    image_summary = ""
+    if result.image_posts_downloaded or result.images_downloaded:
+        image_summary = (
+            f", image_posts_downloaded={result.image_posts_downloaded}, "
+            f"images_downloaded={result.images_downloaded}"
+        )
     print(
-        f"Videos: downloaded={result.downloaded}, "
-        f"skipped={result.skipped}, failed={result.failed}",
+        f"Media: downloaded={result.downloaded}, "
+        f"skipped={result.skipped}, failed={result.failed}{image_summary}",
         file=sys.stderr,
     )
     for err in result.errors:
@@ -97,7 +103,7 @@ async def main_async() -> None:
         raise SystemExit(2) from exc
 
     output_dir = args.output_dir or args.input_json.parent
-    print(f"Downloading {len(aweme_list)} videos to {output_dir}/...", file=sys.stderr)
+    print(f"Downloading {len(aweme_list)} media items to {output_dir}/...", file=sys.stderr)
     result = await download_aweme_videos(
         aweme_list,
         output_dir,

@@ -39,8 +39,15 @@ def build_ffmpeg_command(
     duration: float,
     overwrite: bool,
     ffmpeg_bin: str,
+    relative_paths: bool = False,
 ) -> list[str]:
     overwrite_flag = "-y" if overwrite else "-n"
+    input_path = video_path.name if relative_paths else str(video_path)
+    output_pattern = (
+        str(Path(output_dir.name) / "frame_%04d.jpg")
+        if relative_paths
+        else str(output_dir / "frame_%04d.jpg")
+    )
     return [
         ffmpeg_bin,
         "-hide_banner",
@@ -48,12 +55,12 @@ def build_ffmpeg_command(
         "error",
         overwrite_flag,
         "-i",
-        str(video_path),
+        input_path,
         "-t",
         _format_number(duration),
         "-vf",
         f"fps=1/{_format_number(interval)}",
-        str(output_dir / "frame_%04d.jpg"),
+        output_pattern,
     ]
 
 
@@ -106,8 +113,9 @@ def extract_screenshots(
         duration=duration,
         overwrite=overwrite,
         ffmpeg_bin=ffmpeg_bin,
+        relative_paths=True,
     )
-    subprocess.run(command, check=True)
+    subprocess.run(command, check=True, cwd=video_path.parent)
     print(f"Extracted screenshots: {output_dir}", file=sys.stderr)
     return True
 

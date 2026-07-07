@@ -272,12 +272,12 @@ def build_parser() -> argparse.ArgumentParser:
     collect_parser.add_argument("--max-response-parse-retries", type=int)
     collect_parser.set_defaults(func=collect)
 
-    download_parser = subparsers.add_parser("download", help="Download videos from douyin_posts.json.")
+    download_parser = subparsers.add_parser("download", help="Download media from douyin_posts.json.")
     add_common(download_parser)
     download_parser.add_argument("--input-json", type=Path, required=True)
     download_parser.add_argument("--output-dir", type=Path)
     download_parser.add_argument("--video-concurrency", type=int)
-    download_parser.add_argument("--limit", type=int, help="Maximum newest videos to download. Use 0 for all.")
+    download_parser.add_argument("--limit", type=int, help="Maximum newest media items to download. Use 0 for all.")
     download_parser.set_defaults(func=download)
 
     screenshot_parser = subparsers.add_parser("screenshots", help="Extract screenshots from downloaded videos.")

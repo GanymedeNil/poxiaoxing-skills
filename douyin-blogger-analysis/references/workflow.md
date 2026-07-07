@@ -45,13 +45,13 @@ Useful options:
 - `--max-response-parse-retries N`: retry incomplete matching responses.
 - `--output PATH`: custom output path. Do not use unless the user explicitly asks; the default is `data/<channel_name>/douyin_posts.json`.
 
-Download videos:
+Download media:
 
 ```bash
 python /path/to/douyin-blogger-analysis/scripts/douyin_blogger_analysis.py download --input-json data/<channel_name>/douyin_posts.json --output-dir data/<channel_name> --video-concurrency 3 --limit 10
 ```
 
-By default the download script keeps only the first 10 collected items, which are treated as the newest posts. Use `--limit 0` to download every item in `douyin_posts.json`.
+By default the download script keeps only the first 10 collected items, which are treated as the newest posts. Use `--limit 0` to download every item in `douyin_posts.json`. Video posts are saved as `video.mp4`; image/gallery posts are saved under `images/` in the post folder.
 
 Extract screenshots:
 

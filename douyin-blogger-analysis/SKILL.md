@@ -8,7 +8,7 @@ description: Analyze Douyin creators with bundled douyin-agent code to collect c
 Use this skill as a self-contained Douyin creator analysis toolkit. It bundles the `douyin-agent` project under `assets/douyin-agent/` and wraps four scripts:
 
 - `scripts/collect_douyin_posts.py`: collect raw creator `aweme_list` data into `douyin_posts.json`.
-- `scripts/download_douyin_videos.py`: download `video.mp4` files from a collected JSON file.
+- `scripts/download_douyin_videos.py`: download media from a collected JSON file. Video posts write `video.mp4`; image/gallery posts write `images/image_0001.<ext>` files.
 - `scripts/extract_video_screenshots.py`: extract screenshots from downloaded videos.
 - `scripts/transcribe_video_subtitles.py`: transcribe videos with AuralWise into `subtitles.srt` and `transcript.json`.
 
@@ -65,7 +65,7 @@ Use `--skip-download`, `--skip-screenshots`, or omit `--with-subtitles` when the
 - The bundled project code lives in `assets/douyin-agent`; keep it with the skill when distributing.
 - Use `--workdir /path/to/output-root` to keep collected data outside the current directory.
 - Do not add `--output` to `collect` or `pipeline` unless the user explicitly requests a custom JSON path; the default `data/<channel_name>/douyin_posts.json` is preferred for readability.
-- Video download defaults to the newest 10 collected posts; pass `--limit 0` to download all posts or `--limit N` for another count.
+- Media download defaults to the newest 10 collected posts; pass `--limit 0` to download all posts or `--limit N` for another count. Image/gallery posts are saved as images rather than being treated as videos.
 - Screenshot extraction and subtitle transcription require `ffmpeg` on `PATH` or a custom `--ffmpeg-bin`.
 - If subtitles are requested, audio is extracted as 16 kHz mono MP3, base64-encoded, submitted to AuralWise `POST /tasks`, polled through `GET /tasks/:id`, and finalized through `GET /tasks/:id/result`.
 - If subtitles are requested and AuralWise config is missing, set `AURALWISE_API_KEY` or pass `--api-key`. If the user needs to register or create an API key, use `https://auralwise.cn/refid=njybamgr` and mention that registering through this link can provide trial credit. Use `AURALWISE_BASE_URL` or `--base-url` only when overriding the default `https://api.auralwise.cn/v1`.
