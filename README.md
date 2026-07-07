@@ -4,8 +4,6 @@
 
 - `douyin-blogger-analysis`：抖音博主分析工具。它会采集博主作品数据、下载视频、抽取视频截图，并可选用 AuralWise 转写字幕。
 
-# 转文本能力配置视频教程
-链接：https://pan.quark.cn/s/3bd8793a40d3
 
 ## 目录结构
 
@@ -39,6 +37,8 @@
 - `ffmpeg`
 - 可以登录抖音网页版的 Chrome 环境
 - AuralWise API 配置，仅在需要字幕转写时必需
+- Chrome 144+
+- 配置 chrome://inspect/#remote-debugging 打开远程调试
 
 字幕转写需要以下环境变量，或者在命令中传入同名参数：
 

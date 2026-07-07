@@ -29,10 +29,10 @@ def _default_mcp_args() -> list[str]:
     return [
         "-y",
         "chrome-devtools-mcp@latest",
-        f"--user-data-dir={_default_profile_dir()}",
         "--no-performance-crux",
         "--no-usage-statistics",
         "--experimental-structured-content",
+        "--autoConnect"
     ]
 
 
