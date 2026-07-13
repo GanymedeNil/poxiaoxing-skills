@@ -3,26 +3,81 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import re
 import sys
-import tempfile
 from contextlib import AsyncExitStack
-from pathlib import Path
+from random import uniform
 from typing import Any
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from douyin_agent.browser.types import NetworkRequest
 
-PROFILE_DIR_ENV = "DOUYIN_AGENT_CHROME_PROFILE_DIR"
+_AWEME_REQUEST_DELAY_MIN_SECONDS = 1.5
+_AWEME_REQUEST_DELAY_MAX_SECONDS = 4.0
+_PC_LIBRA_DIVERT_FUNCTION = r'''() => {
+    function n(e) {
+        let r = "";
+        if (e) {
+            r = e?.header?.["user-agent"] || e?.request?.header?.["user-agent"] || "";
+        }
+        if (!r && typeof navigator !== "undefined" && navigator?.userAgent) {
+            r = navigator.userAgent;
+        }
+        return r;
+    }
 
+    function a() {
+        const f = n();
+        const p = {os: "", version: "", isMas: false};
+        if (/osName\/Mas/i.test(f)) {
+            p.isMas = true;
+        }
 
-def _default_profile_dir() -> str:
-    configured_dir = os.environ.get(PROFILE_DIR_ENV)
-    if configured_dir:
-        return configured_dir
-    return str(Path.home() / ".cache" / "douyin-agent" / "chrome-profile")
+        const platform = navigator?.platform;
+        const v = platform === "Win32" || platform === "Windows";
+        const h = ["Mac68K", "MacPPC", "Macintosh", "MacIntel"].includes(platform);
+
+        if (h) {
+            p.os = "Mac";
+            return p;
+        }
+        if (platform === "X11" && !v && !h) {
+            p.os = "Unix";
+            return p;
+        }
+        if (String(platform).indexOf("Linux") > -1) {
+            p.os = "Linux";
+            return p;
+        }
+        if (String(platform).toLowerCase().indexOf("ohos") > -1) {
+            p.os = "Ohos";
+            return p;
+        }
+        if (v) {
+            p.os = "Windows";
+        }
+        return p;
+    }
+
+    return a().os;
+}'''
+_DEVICE_WEB_CPU_CORE_FUNCTION = r'''() => {
+    const prefix = "device_web_cpu_core=";
+    const cookie = document.cookie
+        .split(";")
+        .map((part) => part.trim())
+        .find((part) => part.startsWith(prefix));
+    if (!cookie) {
+        return 0;
+    }
+
+    try {
+        const value = Number(decodeURIComponent(cookie.slice(prefix.length)));
+        return Number.isInteger(value) && value > 0 ? value : 0;
+    } catch {
+        return 0;
+    }
+}'''
 
 
 def _default_mcp_args() -> list[str]:
@@ -32,7 +87,7 @@ def _default_mcp_args() -> list[str]:
         "--no-performance-crux",
         "--no-usage-statistics",
         "--experimental-structured-content",
-        "--autoConnect"
+        "--autoConnect",
     ]
 
 
@@ -65,24 +120,34 @@ def _extract_json_object(result: Any) -> dict[str, Any]:
     return {"result": parsed}
 
 
-def _parse_network_requests_text(text: str) -> list[NetworkRequest]:
-    requests: list[NetworkRequest] = []
-    pattern = re.compile(r"^reqid=(?P<request_id>\S+)\s+\S+\s+(?P<url>https?://\S+)", re.MULTILINE)
-    for match in pattern.finditer(text):
-        requests.append(
-            NetworkRequest(
-                request_id=match.group("request_id"),
-                url=match.group("url"),
-            )
-        )
-    return requests
+def _extract_evaluated_value(result: Any) -> Any:
+    payload = _extract_json_object(result)
+    for key in ("result", "value", "returnValue"):
+        if key not in payload:
+            continue
+        value = payload[key]
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError:
+                return value
+        return value
 
-
-def _extract_response_body_from_text(text: str) -> str | None:
-    match = re.search(r"(?ms)^### Response Body\s*\n(?P<body>.*?)(?=\n### |\Z)", text)
-    if match is None:
-        return None
-    return match.group("body").strip()
+    message = payload.get("message")
+    if isinstance(message, str):
+        fence_start = message.find("```json\n")
+        if fence_start != -1:
+            value_start = fence_start + len("```json\n")
+            fence_end = message.find("\n```", value_start)
+            if fence_end != -1:
+                value = json.loads(message[value_start:fence_end])
+                if isinstance(value, str):
+                    try:
+                        return json.loads(value)
+                    except json.JSONDecodeError:
+                        return value
+                return value
+    raise ValueError("No evaluate_script result returned")
 
 
 class ChromeDevToolsClient:
@@ -100,6 +165,8 @@ class ChromeDevToolsClient:
         self.post_scroll_delay_seconds = post_scroll_delay_seconds
         self._stack: AsyncExitStack | None = None
         self._session: ClientSession | None = None
+        self._pc_libra_divert: str | None = None
+        self._device_web_cpu_core: int | None = None
 
     async def __aenter__(self) -> ChromeDevToolsClient:
         server_params = StdioServerParameters(
@@ -128,254 +195,165 @@ class ChromeDevToolsClient:
     async def open_page(self, url: str) -> None:
         await self.session.call_tool("new_page", {"url": url, "timeout": 0})
 
-    async def list_network_requests(self) -> list[NetworkRequest]:
+    async def has_axios_instance(self) -> bool:
         result = await self.session.call_tool(
-            "list_network_requests",
-            {"includePreservedRequests": True},
+            "evaluate_script",
+            {"function": "() => Boolean(window.axiosInstance)"},
         )
-        payload = _extract_json_object(result)
-        raw_requests = payload.get("networkRequests") or payload.get("requests") or []
-        requests: list[NetworkRequest] = []
-        for item in raw_requests:
-            request_id = str(item.get("reqid") or item.get("requestId") or item.get("id") or "")
-            url = str(item.get("url") or "")
-            if request_id and url:
-                requests.append(NetworkRequest(request_id=request_id, url=url))
-        if requests:
-            return requests
+        return bool(_extract_evaluated_value(result))
 
-        text = _extract_text_content(result)
-        if text:
-            return _parse_network_requests_text(text)
-        return requests
+    async def get_pc_libra_divert(self) -> str:
+        if self._pc_libra_divert is not None:
+            return self._pc_libra_divert
 
-    async def get_network_response(self, request_id: str) -> str:
-        # Save the response body to a temporary file to avoid inline
-        # truncation.  chrome-devtools-mcp truncates large response bodies
-        # when returning them inline (e.g. at ~10 000 chars), but writing
-        # to a file preserves the full content.
-        temp_fd, temp_path = tempfile.mkstemp(suffix=".network-response")
-        os.close(temp_fd)
-        try:
-            result = await self.session.call_tool(
-                "get_network_request",
-                {
-                    "reqid": int(request_id) if request_id.isdigit() else request_id,
-                    "responseFilePath": temp_path,
-                },
-            )
-            # Prefer the file content (full, untruncated).
-            try:
-                with open(temp_path, "r", encoding="utf-8") as f:
-                    body = f.read()
-                if body.strip():
-                    return body
-                print(
-                    f"[douyin-agent] Empty response body file for request {request_id}",
-                    file=sys.stderr,
-                )
-            except (FileNotFoundError, IOError):
-                print(
-                    f"[douyin-agent] Response body file not created for request {request_id}",
-                    file=sys.stderr,
-                )
-        finally:
-            try:
-                os.unlink(temp_path)
-            except OSError:
-                pass
+        result = await self.session.call_tool(
+            "evaluate_script",
+            {"function": _PC_LIBRA_DIVERT_FUNCTION},
+        )
+        pc_libra_divert = _extract_evaluated_value(result)
+        if not isinstance(pc_libra_divert, str):
+            raise ValueError("Browser pc_libra_divert result is not a string")
+        self._pc_libra_divert = pc_libra_divert
+        return pc_libra_divert
 
-        # Fall back to inline extraction from the same call result.
-        payload = _extract_json_object(result)
-        for key in ("responseBody", "response", "body"):
-            value = payload.get(key)
-            if isinstance(value, str):
-                if not value.strip():
-                    print(
-                        f"[douyin-agent] Empty response body for request {request_id} "
-                        f"(structured key={key})",
-                        file=sys.stderr,
-                    )
-                return value
-        network_request = payload.get("networkRequest")
-        if isinstance(network_request, dict):
-            value = network_request.get("responseBody")
-            if isinstance(value, str):
-                if not value.strip():
-                    print(
-                        f"[douyin-agent] Empty response body for request {request_id} "
-                        f"(networkRequest.responseBody)",
-                        file=sys.stderr,
-                    )
-                return value
-        text = _extract_text_content(result)
-        if text:
-            response_body = _extract_response_body_from_text(text)
-            if response_body is not None:
-                return response_body
-            print(
-                f"[douyin-agent] No response body section found for request {request_id}, "
-                f"returning empty string",
-                file=sys.stderr,
-            )
-            return ""
-        raise ValueError(f"No response body returned for network request {request_id}")
+    async def get_device_web_cpu_core(self) -> int:
+        if self._device_web_cpu_core is not None:
+            return self._device_web_cpu_core
 
-    async def scroll_down(self) -> None:
+        result = await self.session.call_tool(
+            "evaluate_script",
+            {"function": _DEVICE_WEB_CPU_CORE_FUNCTION},
+        )
+        device_web_cpu_core = _extract_evaluated_value(result)
+        if isinstance(device_web_cpu_core, bool) or not isinstance(device_web_cpu_core, int):
+            raise ValueError("Browser device_web_cpu_core result is not an integer")
+        self._device_web_cpu_core = device_web_cpu_core
+        return device_web_cpu_core
+
+    async def request_aweme_posts(
+        self,
+        *,
+        sec_user_id: str,
+        max_cursor: int | str,
+        need_time_list: int,
+        count: int,
+    ) -> dict[str, Any]:
+        params = {
+            "aid": 6383,
+            "channel": "channel_pc_web",
+            "count": count,
+            "cut_version": 1,
+            "device_platform": "webapp",
+            "locate_query": False,
+            "max_cursor": max_cursor,
+            "need_time_list": need_time_list,
+            "pc_client_type": 1,
+            "publish_video_strategy_type": 2,
+            "sec_user_id": sec_user_id,
+            "show_live_replay_strategy": 1,
+            "support_h265": 1,
+            "support_dash": 1,
+            "time_list_query": 0,
+            "update_version_code": "170400",
+        }
+        return await self._request_douyin_api("/aweme/v1/web/aweme/post/", params)
+
+    async def request_aweme_comments(
+        self,
+        aweme_id: str,
+        *,
+        cursor: int | str,
+        count: int,
+    ) -> dict[str, Any]:
+        return await self._request_douyin_api(
+            "/aweme/v1/web/comment/list/",
+            {
+                "device_platform": "webapp",
+                "aid": 6383,
+                "channel": "channel_pc_web",
+                "aweme_id": aweme_id,
+                "cursor": cursor,
+                "count": count,
+                "item_type": 0,
+                "cut_version": 1,
+                "pc_img_format": "webp",
+                "pc_client_type": 1,
+                "support_h265": 1,
+                "support_dash": 1,
+                "update_version_code": "170400",
+            },
+        )
+
+    async def request_aweme_comment_replies(
+        self,
+        *,
+        comment_id: str,
+        item_id: str,
+        cursor: int | str,
+        count: int,
+    ) -> dict[str, Any]:
+        return await self._request_douyin_api(
+            "/aweme/v1/web/comment/list/reply/",
+            {
+                "device_platform": "webapp",
+                "aid": 6383,
+                "channel": "channel_pc_web",
+                "comment_id": comment_id,
+                "item_id": item_id,
+                "cursor": cursor,
+                "count": count,
+                "item_type": 0,
+                "cut_version": 1,
+                "pc_img_format": "webp",
+                "pc_client_type": 1,
+                "support_h265": 1,
+                "support_dash": 1,
+                "update_version_code": "170400",
+            },
+        )
+
+    async def _request_douyin_api(self, endpoint: str, params: dict[str, Any]) -> dict[str, Any]:
+        delay_seconds = uniform(
+            _AWEME_REQUEST_DELAY_MIN_SECONDS,
+            _AWEME_REQUEST_DELAY_MAX_SECONDS,
+        )
+        await asyncio.sleep(delay_seconds)
+        request_params = {
+            **params,
+            "pc_libra_divert": await self.get_pc_libra_divert(),
+            "cpu_core_num": await self.get_device_web_cpu_core(),
+        }
+        params_json = json.dumps(request_params, ensure_ascii=False)
         result = await self.session.call_tool(
             "evaluate_script",
             {
-                "function": """() => {
-                    const before = window.pageYOffset || document.documentElement.scrollTop || 0;
-
-                    // 1. Try scrolling the main window by one viewport.
-                    window.scrollBy(0, window.innerHeight);
-
-                    // 2. Find and scroll any nested scrollable containers
-                    //    (Douyin often uses an inner div for scrolling).
-                    let containerScrolled = false;
-                    const allElements = document.querySelectorAll('div, main, section');
-                    for (const el of allElements) {
-                        if (el.scrollHeight <= el.clientHeight) continue;
-                        if (el.clientHeight < 100) continue;
-                        const style = window.getComputedStyle(el);
-                        if (style.overflowY !== 'auto' && style.overflowY !== 'scroll') continue;
-                        el.scrollTop = el.scrollHeight;
-                        containerScrolled = true;
-                    }
-
-                    // 3. Dispatch scroll events to trigger lazy-loading observers.
-                    window.dispatchEvent(new Event('scroll', { bubbles: true }));
-                    document.dispatchEvent(new Event('scroll', { bubbles: true }));
-
-                    const after = window.pageYOffset || document.documentElement.scrollTop || 0;
-                    return JSON.stringify({
-                        before,
-                        after,
-                        moved: after !== before,
-                        containerScrolled,
-                        bodyHeight: document.body.scrollHeight,
-                        viewportHeight: window.innerHeight,
-                    });
-                }"""
+                "function": f'''async () => {{
+                    const axios = window.axiosInstance;
+                    if (!axios) throw new Error("window.axiosInstance 不存在");
+                    const res = await axios({{
+                        url: {json.dumps(endpoint)},
+                        method: "GET",
+                        baseURL: "",
+                        withCredentials: true,
+                        params: {params_json},
+                        headers: {{"Content-Type": "application/json"}}
+                    }});
+                    return JSON.stringify(res.data);
+                }}'''
             },
         )
-        # Log the scroll result for debugging.
-        text = _extract_text_content(result)
-        payload = _extract_json_object(result)
-        scroll_info = payload.get("result") or payload.get("value") or text or ""
-        if scroll_info:
-            print(
-                f"[douyin-agent] Scroll: {scroll_info}",
-                file=sys.stderr,
-            )
+        payload = _extract_evaluated_value(result)
+        if not isinstance(payload, dict):
+            raise ValueError("Douyin post request did not return a JSON object")
+        return payload
 
     async def wait_for_network_idle_or_delay(self) -> None:
         await asyncio.sleep(self.post_scroll_delay_seconds)
 
     async def notify_login_required(self, profile_url: str) -> None:
         print(
-            "No Douyin post API response was detected yet. "
+            "window.axiosInstance is not available yet. "
             "If the opened Chrome window asks for login, finish logging into Douyin there. "
             f"Waiting before continuing collection for {profile_url} ...",
             file=sys.stderr,
         )
-
-    async def notify_skipped_post_response(self, request_id: str, reason: str) -> None:
-        print(
-            f"Skipped Douyin post response {request_id}: {reason}. Waiting for a valid response...",
-            file=sys.stderr,
-        )
-
-    async def install_response_interceptor(self) -> None:
-        """Inject JavaScript to capture Douyin API responses in-page.
-
-        Hooks ``fetch`` and ``XMLHttpRequest`` to store response bodies in
-        ``window.__douyin_captured_responses`` before Chrome DevTools Protocol
-        can evict them from its cache.
-        """
-        await self.session.call_tool(
-            "evaluate_script",
-            {
-                "function": """() => {
-                    if (window.__douyin_interceptor_installed) return;
-                    window.__douyin_interceptor_installed = true;
-                    window.__douyin_captured_responses = [];
-
-                    const API_PATH = '/aweme/v1/web/aweme/post/';
-
-                    // Intercept fetch
-                    const originalFetch = window.fetch;
-                    window.fetch = async function(...args) {
-                        const response = await originalFetch.apply(this, args);
-                        const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url) || '';
-                        if (url.includes(API_PATH)) {
-                            try {
-                                const clone = response.clone();
-                                const text = await clone.text();
-                                window.__douyin_captured_responses.push({url: url, body: text});
-                            } catch(e) {}
-                        }
-                        return response;
-                    };
-
-                    // Intercept XMLHttpRequest
-                    const originalOpen = XMLHttpRequest.prototype.open;
-                    const originalSend = XMLHttpRequest.prototype.send;
-                    XMLHttpRequest.prototype.open = function(method, url, ...rest) {
-                        this.__douyin_url = url;
-                        return originalOpen.apply(this, [method, url, ...rest]);
-                    };
-                    XMLHttpRequest.prototype.send = function(...args) {
-                        const xhr = this;
-                        xhr.addEventListener('load', function() {
-                            if (xhr.__douyin_url && xhr.__douyin_url.includes(API_PATH)) {
-                                try {
-                                    window.__douyin_captured_responses.push({
-                                        url: xhr.__douyin_url,
-                                        body: xhr.responseText
-                                    });
-                                } catch(e) {}
-                            }
-                        });
-                        return originalSend.apply(this, args);
-                    };
-                }"""
-            },
-        )
-
-    async def get_captured_responses(self) -> list[dict[str, str]]:
-        """Return and clear captured Douyin API responses from the page."""
-        result = await self.session.call_tool(
-            "evaluate_script",
-            {
-                "function": """() => {
-                    const responses = window.__douyin_captured_responses || [];
-                    window.__douyin_captured_responses = [];
-                    return JSON.stringify(responses);
-                }"""
-            },
-        )
-        # Try structured content first (result/value/returnValue keys)
-        payload = _extract_json_object(result)
-        for key in ("result", "value", "returnValue"):
-            value = payload.get(key)
-            if isinstance(value, str):
-                try:
-                    parsed = json.loads(value)
-                    if isinstance(parsed, list):
-                        return parsed
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            if isinstance(value, list):
-                return value
-        # Fall back to text content
-        text = _extract_text_content(result)
-        if text:
-            stripped = text.strip()
-            if stripped.startswith("["):
-                try:
-                    return json.loads(stripped)
-                except (json.JSONDecodeError, TypeError):
-                    pass
-        return []

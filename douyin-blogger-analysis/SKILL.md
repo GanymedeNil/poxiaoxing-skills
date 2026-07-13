@@ -8,6 +8,7 @@ description: Analyze Douyin creators with bundled douyin-agent code to collect c
 Use this skill as a self-contained Douyin creator analysis toolkit. It bundles the `douyin-agent` project under `assets/douyin-agent/` and wraps four scripts:
 
 - `scripts/collect_douyin_posts.py`: collect raw creator `aweme_list` data into `douyin_posts.json`.
+- `scripts/collect_douyin_comments.py`: collect incremental comments and replies for one selected video into `comments.json`.
 - `scripts/download_douyin_videos.py`: download media from a collected JSON file. Video posts write `video.mp4`; image/gallery posts write `images/image_0001.<ext>` files.
 - `scripts/extract_video_screenshots.py`: extract screenshots from downloaded videos.
 - `scripts/transcribe_video_subtitles.py`: transcribe videos with AuralWise into `subtitles.srt` and `transcript.json`.
@@ -37,6 +38,8 @@ Use the bundled wrapper. It defaults to the skill's copied code and writes relat
 
 ```bash
 python /path/to/douyin-blogger-analysis/scripts/douyin_blogger_analysis.py collect --profile-url "https://www.douyin.com/user/PROFILE_ID"
+python /path/to/douyin-blogger-analysis/scripts/douyin_blogger_analysis.py comments --video-url "https://www.douyin.com/user/PROFILE_ID?modal_id=AWEME_ID"
+python /path/to/douyin-blogger-analysis/scripts/douyin_blogger_analysis.py comments --input-json data/<channel_name>/douyin_posts.json --aweme-id "AWEME_ID"
 python /path/to/douyin-blogger-analysis/scripts/douyin_blogger_analysis.py download --input-json data/<channel_name>/douyin_posts.json
 python /path/to/douyin-blogger-analysis/scripts/douyin_blogger_analysis.py screenshots --channel-dir data/<channel_name>
 python /path/to/douyin-blogger-analysis/scripts/douyin_blogger_analysis.py subtitles --channel-dir data/<channel_name>
@@ -61,7 +64,9 @@ Use `--skip-download`, `--skip-screenshots`, or omit `--with-subtitles` when the
 ## Operational Notes
 
 - Collection and downloading require network access and may need escalation in sandboxed Codex environments.
-- Collection is interactive on first login. Keep the browser window open until the `/aweme/v1/web/aweme/post/` response appears.
+- Comment collection runs only for one explicitly selected video. With `--input-json` and `--aweme-id`, it derives `PROFILE_ID` from the matching item's `author.sec_uid`, so `--profile-url` is unnecessary. Direct `--video-url` and explicit `--profile-url --aweme-id` remain supported. It defaults to the newest 20 top-level comments and 20 replies per scanned comment; pass `--comment-limit 0` or `--reply-limit 0` to collect all available pages. Reruns merge only unseen comment/reply IDs and scan replies for known comments. When `--input-json` is provided, `comments.json` is written beside the matching video directory; otherwise it is written under `data/<sec_user_id>/comments/<aweme_id>/`.
+- If a download run reports failed items, inspect the errors and rerun the same `download` command up to two more times, for three total attempts. Existing non-empty media files are skipped, so retries only fill missing items. Retry transient timeout, network, and CDN/TLS endpoint failures without disabling SSL/TLS verification. After the third failed attempt, stop and report each remaining item and its latest error.
+- Collection is interactive on first login. Keep the browser window open until the page initializes `window.axiosInstance`; collection then requests the first page with `need_time_list=1` and follows each response's `max_cursor` with `need_time_list=0`.
 - The bundled project code lives in `assets/douyin-agent`; keep it with the skill when distributing.
 - Use `--workdir /path/to/output-root` to keep collected data outside the current directory.
 - Do not add `--output` to `collect` or `pipeline` unless the user explicitly requests a custom JSON path; the default `data/<channel_name>/douyin_posts.json` is preferred for readability.

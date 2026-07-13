@@ -92,6 +92,18 @@ data/<频道名>/douyin_posts.json
 
 首次采集可能需要在打开的浏览器窗口中手动登录抖音。登录后保持窗口打开，直到脚本捕获到作品接口响应。
 
+### 获取视频评论
+
+已有作品列表时，只需指定 JSON 和视频 ID：
+
+```bash
+python douyin-blogger-analysis/scripts/douyin_blogger_analysis.py comments \
+  --input-json data/<频道名>/douyin_posts.json \
+  --aweme-id "AWEME_ID"
+```
+
+程序会从匹配视频 item 的 `author.sec_uid` 获取 `PROFILE_ID`，无需再传 `--profile-url`。也可以继续使用带 `modal_id` 的 `--video-url`，或显式传入 `--profile-url` 和 `--aweme-id`。
+
 ### 下载视频
 
 ```bash

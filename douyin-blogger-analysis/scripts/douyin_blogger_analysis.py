@@ -12,6 +12,7 @@ from pathlib import Path
 
 REQUIRED_SCRIPTS = {
     "collect": Path("scripts/collect_douyin_posts.py"),
+    "comments": Path("scripts/collect_douyin_comments.py"),
     "download": Path("scripts/download_douyin_videos.py"),
     "screenshots": Path("scripts/extract_video_screenshots.py"),
     "subtitles": Path("scripts/transcribe_video_subtitles.py"),
@@ -136,6 +137,29 @@ def download(args: argparse.Namespace) -> None:
         command.extend(["--video-concurrency", str(args.video_concurrency)])
     if args.limit is not None:
         command.extend(["--limit", str(args.limit)])
+    run_command(command, cwd=workdir(args.workdir), dry_run=args.dry_run)
+
+
+def comments(args: argparse.Namespace) -> None:
+    if args.video_url and args.aweme_id:
+        raise SystemExit("--aweme-id cannot be used with --video-url")
+    if args.video_url and args.input_json:
+        raise SystemExit("--input-json cannot be used with --video-url")
+    if not args.video_url and not (args.profile_url or args.input_json):
+        raise SystemExit("Provide --video-url, --profile-url, or --input-json")
+    if not args.video_url and not args.aweme_id:
+        raise SystemExit("--profile-url and --input-json require --aweme-id")
+    root = project_root(args.project_root)
+    command = uv_python_for(root, REQUIRED_SCRIPTS["comments"])
+    if args.video_url:
+        command.extend(["--video-url", args.video_url])
+    else:
+        if args.profile_url:
+            command.extend(["--profile-url", args.profile_url])
+        command.extend(["--aweme-id", args.aweme_id])
+    if args.input_json:
+        command.extend(["--input-json", str(args.input_json)])
+    command.extend(["--comment-limit", str(args.comment_limit), "--reply-limit", str(args.reply_limit)])
     run_command(command, cwd=workdir(args.workdir), dry_run=args.dry_run)
 
 
@@ -271,6 +295,17 @@ def build_parser() -> argparse.ArgumentParser:
     collect_parser.add_argument("--max-idle-rounds", type=int)
     collect_parser.add_argument("--max-response-parse-retries", type=int)
     collect_parser.set_defaults(func=collect)
+
+    comments_parser = subparsers.add_parser("comments", help="Collect incremental comments for one selected Douyin video.")
+    add_common(comments_parser)
+    comment_source = comments_parser.add_mutually_exclusive_group()
+    comment_source.add_argument("--video-url")
+    comment_source.add_argument("--profile-url")
+    comments_parser.add_argument("--aweme-id")
+    comments_parser.add_argument("--input-json", type=Path)
+    comments_parser.add_argument("--comment-limit", type=int, default=20)
+    comments_parser.add_argument("--reply-limit", type=int, default=20)
+    comments_parser.set_defaults(func=comments)
 
     download_parser = subparsers.add_parser("download", help="Download media from douyin_posts.json.")
     add_common(download_parser)

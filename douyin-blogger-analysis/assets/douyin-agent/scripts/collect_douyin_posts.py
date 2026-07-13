@@ -38,7 +38,15 @@ def _sanitize_dir_name(name: str) -> str:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Collect raw Douyin aweme posts from a creator profile.")
     parser.add_argument("profile_url", help="Douyin creator homepage URL, for example https://www.douyin.com/user/...")
-    parser.add_argument("--max-idle-rounds", type=int, default=3)
+    parser.add_argument(
+        "--max-idle-rounds",
+        type=int,
+        default=3,
+        help=(
+            "Deprecated compatibility option; direct axios pagination does not use "
+            "idle scroll rounds."
+        ),
+    )
     parser.add_argument(
         "--login-wait-rounds",
         type=int,
@@ -49,7 +57,10 @@ def parse_args() -> argparse.Namespace:
         "--max-response-parse-retries",
         type=int,
         default=5,
-        help="How many times to retry a matching post request while its response body is incomplete.",
+        help=(
+            "Deprecated compatibility option; direct axios responses are decoded "
+            "immediately."
+        ),
     )
     parser.add_argument(
         "--output",
