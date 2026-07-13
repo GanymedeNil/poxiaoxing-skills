@@ -72,7 +72,9 @@ Collect comments:
 python /path/to/douyin-blogger-analysis/scripts/douyin_blogger_analysis.py comments --input-json data/<channel_name>/douyin_posts.json --aweme-id "AWEME_ID"
 ```
 
-The comment command prints progress to stderr: target/output path, browser readiness, top-level comment page requests/results, reply page requests/results, and the final saved summary.
+By default the comment command collects 100 top-level comments and skips replies. Use `--comment-limit N` to change the top-level comment limit, `--comment-limit 0` to scan all available top-level comment pages, and `--reply-limit N` to collect up to N replies per scanned top-level comment.
+
+The comment command prints progress to stderr: target/output path, browser readiness, top-level comment page requests/results, reply skip/enabled progress, and the final saved summary.
 
 Transcribe subtitles:
 

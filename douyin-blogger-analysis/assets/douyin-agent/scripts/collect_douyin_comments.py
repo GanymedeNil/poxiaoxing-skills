@@ -23,8 +23,13 @@ def parse_args() -> argparse.Namespace:
     source.add_argument("--profile-url")
     parser.add_argument("--aweme-id")
     parser.add_argument("--input-json", type=Path)
-    parser.add_argument("--comment-limit", type=int, default=20)
-    parser.add_argument("--reply-limit", type=int, default=20)
+    parser.add_argument("--comment-limit", type=int, default=100)
+    parser.add_argument(
+        "--reply-limit",
+        type=int,
+        default=0,
+        help="Maximum replies to collect per scanned top-level comment. Defaults to 0, which skips replies.",
+    )
     args = parser.parse_args()
     if args.video_url and args.aweme_id:
         parser.error("--aweme-id cannot be used with --video-url")

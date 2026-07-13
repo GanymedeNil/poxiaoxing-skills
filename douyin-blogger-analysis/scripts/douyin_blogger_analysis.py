@@ -343,8 +343,13 @@ def build_parser() -> argparse.ArgumentParser:
     comment_source.add_argument("--profile-url")
     comments_parser.add_argument("--aweme-id")
     comments_parser.add_argument("--input-json", type=Path)
-    comments_parser.add_argument("--comment-limit", type=int, default=20)
-    comments_parser.add_argument("--reply-limit", type=int, default=20)
+    comments_parser.add_argument("--comment-limit", type=int, default=100)
+    comments_parser.add_argument(
+        "--reply-limit",
+        type=int,
+        default=0,
+        help="Maximum replies to collect per scanned top-level comment. Defaults to 0, which skips replies.",
+    )
     comments_parser.set_defaults(func=comments)
 
     download_parser = subparsers.add_parser("download", help="Download media from douyin_posts.json.")

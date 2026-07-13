@@ -73,6 +73,9 @@ async def _collect_replies(
     new_replies = 0
     page_number = 0
 
+    if reply_limit == 0:
+        return replies, new_replies, "skipped"
+
     def finish(reason: str) -> tuple[list[dict[str, Any]], int, str]:
         _emit_progress(
             progress,
@@ -90,7 +93,7 @@ async def _collect_replies(
             progress,
             "[replies] request "
             f"comment_id={comment_id} page={page_number} cursor={cursor} "
-            f"count={count} limit={_limit_label(reply_limit)}",
+            f"count={count} limit={reply_limit}",
         )
         payload = await browser.request_aweme_comment_replies(
             comment_id=comment_id,
@@ -142,8 +145,8 @@ async def collect_aweme_comments(
     modal_url: str,
     aweme_id: str,
     *,
-    comment_limit: int = 20,
-    reply_limit: int = 20,
+    comment_limit: int = 100,
+    reply_limit: int = 0,
     existing_comments: list[dict[str, Any]] | None = None,
     login_wait_rounds: int = 300,
     progress: Callable[[str], None] | None = None,
@@ -167,6 +170,9 @@ async def collect_aweme_comments(
     new_replies = 0
     reply_termination_reasons: dict[str, str] = {}
     page_number = 0
+
+    if reply_limit == 0:
+        _emit_progress(progress, "[replies] skipped reply_limit=0")
 
     def finish(reason: str) -> str:
         _emit_progress(
@@ -209,7 +215,7 @@ async def collect_aweme_comments(
                 page_new += 1
                 new_comments += 1
 
-            if int(comment.get("reply_comment_total", 0) or 0) > 0:
+            if reply_limit > 0 and int(comment.get("reply_comment_total", 0) or 0) > 0:
                 existing_replies = record.get("replies")
                 if not isinstance(existing_replies, list):
                     existing_replies = []

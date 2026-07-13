@@ -135,8 +135,8 @@ async def collect_douyin_aweme_comments_async(
     profile_url: str | None,
     aweme_id: str | None,
     input_json: Path | None,
-    comment_limit: int = 20,
-    reply_limit: int = 20,
+    comment_limit: int = 100,
+    reply_limit: int = 0,
     workdir: Path | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> Path:
