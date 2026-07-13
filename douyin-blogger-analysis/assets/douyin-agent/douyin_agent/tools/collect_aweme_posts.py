@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import unquote, urlparse
 
@@ -42,16 +43,20 @@ async def collect_douyin_aweme_posts_async(
     max_idle_rounds: int = 3,
     login_wait_rounds: int = 300,
     max_response_parse_retries: int = 5,
+    progress: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     _ = max_idle_rounds, max_response_parse_retries
     valid_url = _validate_profile_url(profile_url)
     sec_user_id = _extract_sec_user_id(valid_url)
+    if progress is not None:
+        progress(f"[posts] target sec_user_id={sec_user_id} profile_url={valid_url}")
     async with ChromeDevToolsClient() as browser:
         result = await collect_aweme_posts(
             browser,
             valid_url,
             sec_user_id=sec_user_id,
             login_wait_rounds=login_wait_rounds,
+            progress=progress,
         )
     return _result_to_tool_payload(result)
 
@@ -61,6 +66,7 @@ def collect_douyin_aweme_posts(
     max_idle_rounds: int = 3,
     login_wait_rounds: int = 300,
     max_response_parse_retries: int = 5,
+    progress: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Collect raw aweme_list items from a Douyin creator homepage using logged-in Chrome."""
 
@@ -70,5 +76,6 @@ def collect_douyin_aweme_posts(
             max_idle_rounds=max_idle_rounds,
             login_wait_rounds=login_wait_rounds,
             max_response_parse_retries=max_response_parse_retries,
+            progress=progress,
         )
     )

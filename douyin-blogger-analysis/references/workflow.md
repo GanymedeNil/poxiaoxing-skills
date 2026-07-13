@@ -45,6 +45,8 @@ Useful options:
 - `--max-response-parse-retries N`: retry incomplete matching responses.
 - `--output PATH`: custom output path. Do not use unless the user explicitly asks; the default is `data/<channel_name>/douyin_posts.json`.
 
+The collect command prints progress to stderr: target profile, browser readiness, posts page requests/results, and the final saved summary.
+
 Download media:
 
 ```bash
@@ -63,6 +65,14 @@ Useful options:
 
 - `--overwrite`: regenerate existing screenshots.
 - `--ffmpeg-bin ffmpeg`: use a specific ffmpeg executable.
+
+Collect comments:
+
+```bash
+python /path/to/douyin-blogger-analysis/scripts/douyin_blogger_analysis.py comments --input-json data/<channel_name>/douyin_posts.json --aweme-id "AWEME_ID"
+```
+
+The comment command prints progress to stderr: target/output path, browser readiness, top-level comment page requests/results, reply page requests/results, and the final saved summary.
 
 Transcribe subtitles:
 

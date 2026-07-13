@@ -12,6 +12,10 @@ if str(PROJECT_ROOT) not in sys.path:
 from douyin_agent.tools.collect_aweme_comments import collect_douyin_aweme_comments_async
 
 
+def print_progress(message: str) -> None:
+    print(message, file=sys.stderr, flush=True)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Collect incremental Douyin comments for one selected video.")
     source = parser.add_mutually_exclusive_group()
@@ -42,6 +46,7 @@ async def main_async() -> None:
         input_json=args.input_json,
         comment_limit=args.comment_limit,
         reply_limit=args.reply_limit,
+        progress=print_progress,
     )
     print(output_path)
 

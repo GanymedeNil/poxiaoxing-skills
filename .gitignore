@@ -2,3 +2,8 @@
 .DS_Store
 
 .idea
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/

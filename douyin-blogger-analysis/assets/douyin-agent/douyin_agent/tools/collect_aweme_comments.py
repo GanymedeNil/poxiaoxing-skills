@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -137,6 +138,7 @@ async def collect_douyin_aweme_comments_async(
     comment_limit: int = 20,
     reply_limit: int = 20,
     workdir: Path | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> Path:
     target = parse_comment_target(
         video_url=video_url,
@@ -151,6 +153,12 @@ async def collect_douyin_aweme_comments_async(
         workdir=workdir,
     )
     existing_comments = _load_existing_comments(output_path)
+    if progress is not None:
+        progress(
+            "[comments] target "
+            f"aweme_id={target.aweme_id} existing_comments={len(existing_comments)} "
+            f"output={output_path}"
+        )
     async with ChromeDevToolsClient() as browser:
         result = await collect_aweme_comments(
             browser,
@@ -159,6 +167,7 @@ async def collect_douyin_aweme_comments_async(
             comment_limit=comment_limit,
             reply_limit=reply_limit,
             existing_comments=existing_comments,
+            progress=progress,
         )
 
     payload = {
@@ -173,6 +182,14 @@ async def collect_douyin_aweme_comments_async(
     temporary_path = output_path.with_suffix(".tmp")
     temporary_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary_path.replace(output_path)
+    if progress is not None:
+        summary = result["summary"]
+        progress(
+            "[comments] saved "
+            f"new_comments={summary['new_comments']} new_replies={summary['new_replies']} "
+            f"scanned={summary['comments_scanned']} reason={summary['comments_termination_reason']} "
+            f"output={output_path}"
+        )
     return output_path
 
 

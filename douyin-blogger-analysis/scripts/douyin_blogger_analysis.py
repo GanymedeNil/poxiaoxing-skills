@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import selectors
 import shutil
 import subprocess
 import sys
@@ -52,6 +53,49 @@ def run_capture(command: list[str], *, cwd: Path, dry_run: bool = False) -> subp
     if dry_run:
         return None
     return subprocess.run(command, cwd=cwd, text=True, capture_output=True, check=True)
+
+
+def run_capture_streaming(command: list[str], *, cwd: Path, dry_run: bool = False) -> subprocess.CompletedProcess[str] | None:
+    print("+ " + " ".join(command), file=sys.stderr)
+    if dry_run:
+        return None
+
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    stdout_parts: list[str] = []
+    stderr_parts: list[str] = []
+
+    selector = selectors.DefaultSelector()
+    if process.stdout is not None:
+        selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+    if process.stderr is not None:
+        selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+
+    while selector.get_map():
+        for key, _ in selector.select():
+            chunk = key.fileobj.readline()
+            if chunk:
+                if key.data == "stdout":
+                    stdout_parts.append(chunk)
+                    print(chunk, end="")
+                else:
+                    stderr_parts.append(chunk)
+                    print(chunk, end="", file=sys.stderr)
+            else:
+                selector.unregister(key.fileobj)
+                key.fileobj.close()
+
+    return_code = process.wait()
+    stdout = "".join(stdout_parts)
+    stderr = "".join(stderr_parts)
+    if return_code:
+        raise subprocess.CalledProcessError(return_code, command, output=stdout, stderr=stderr)
+    return subprocess.CompletedProcess(command, return_code, stdout=stdout, stderr=stderr)
 
 
 def has_auralwise_config(args: argparse.Namespace | None = None) -> bool:
@@ -118,12 +162,8 @@ def collect(args: argparse.Namespace) -> Path | None:
         run_command(command, cwd=output_dir, dry_run=args.dry_run)
         return Path(args.output).expanduser() if args.output else None
 
-    completed = run_capture(command, cwd=output_dir, dry_run=False)
+    completed = run_capture_streaming(command, cwd=output_dir, dry_run=False)
     stderr = completed.stderr if completed else ""
-    if completed and completed.stdout:
-        print(completed.stdout, end="")
-    if stderr:
-        print(stderr, end="", file=sys.stderr)
     match = re.search(r"Results written to (.+)", stderr)
     return Path(match.group(1).strip()) if match else None
 

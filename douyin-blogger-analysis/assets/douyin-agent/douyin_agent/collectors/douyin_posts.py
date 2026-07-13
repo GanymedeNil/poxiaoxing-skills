@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -58,6 +59,11 @@ def _summary(
     )
 
 
+def _emit_progress(progress: Callable[[str], None] | None, message: str) -> None:
+    if progress is not None:
+        progress(message)
+
+
 async def collect_aweme_posts(
     browser: BrowserClient,
     profile_url: str,
@@ -65,17 +71,27 @@ async def collect_aweme_posts(
     sec_user_id: str,
     login_wait_rounds: int = 300,
     count: int = 18,
+    progress: Callable[[str], None] | None = None,
 ) -> AwemeCollectionResult:
+    _emit_progress(progress, f"[posts] opening {profile_url}")
     await browser.open_page(profile_url)
     login_notification_sent = False
 
     for wait_index in range(login_wait_rounds + 1):
         if await browser.has_axios_instance():
+            _emit_progress(progress, "[posts] browser ready")
             break
         if not login_notification_sent:
             await browser.notify_login_required(profile_url)
             login_notification_sent = True
+            _emit_progress(progress, "[posts] waiting for Douyin login/page initialization")
+        elif wait_index % 10 == 0:
+            _emit_progress(
+                progress,
+                f"[posts] still waiting for page initialization round={wait_index}/{login_wait_rounds}",
+            )
         if wait_index == login_wait_rounds:
+            _emit_progress(progress, "[posts] done pages=0 items=0 reason=axios_unavailable")
             return AwemeCollectionResult(
                 profile_url=profile_url,
                 aweme_list=[],
@@ -94,17 +110,34 @@ async def collect_aweme_posts(
     need_time_list = 1
 
     while True:
+        _emit_progress(
+            progress,
+            "[posts] request "
+            f"page={pages_seen + 1} max_cursor={max_cursor} "
+            f"need_time_list={need_time_list} count={count}",
+        )
         payload = await browser.request_aweme_posts(
             sec_user_id=sec_user_id,
             max_cursor=max_cursor,
             need_time_list=need_time_list,
             count=count,
         )
-        aweme_list.extend(_validate_post_payload(payload))
+        page_items = _validate_post_payload(payload)
+        aweme_list.extend(page_items)
         pages_seen += 1
         has_more = payload.get("has_more")
+        _emit_progress(
+            progress,
+            "[posts] page "
+            f"page={pages_seen} items={len(page_items)} total={len(aweme_list)} "
+            f"has_more={has_more} max_cursor={payload.get('max_cursor')}",
+        )
 
         if has_more == 0:
+            _emit_progress(
+                progress,
+                f"[posts] done pages={pages_seen} items={len(aweme_list)} reason=has_more_0",
+            )
             return AwemeCollectionResult(
                 profile_url=profile_url,
                 aweme_list=aweme_list,
@@ -126,6 +159,10 @@ async def collect_aweme_posts(
             need_time_list = 0
             continue
 
+        _emit_progress(
+            progress,
+            f"[posts] done pages={pages_seen} items={len(aweme_list)} reason={termination_reason}",
+        )
         return AwemeCollectionResult(
             profile_url=profile_url,
             aweme_list=aweme_list,

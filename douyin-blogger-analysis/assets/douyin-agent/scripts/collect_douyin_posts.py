@@ -14,6 +14,10 @@ if str(PROJECT_ROOT) not in sys.path:
 from douyin_agent.tools.collect_aweme_posts import collect_douyin_aweme_posts_async
 
 
+def print_progress(message: str) -> None:
+    print(message, file=sys.stderr, flush=True)
+
+
 def _extract_channel_name(result: dict) -> str:
     """Extract a filesystem-safe channel name from collected data or URL."""
     # Try author nickname from the first aweme item.
@@ -79,6 +83,7 @@ async def main_async() -> None:
         max_idle_rounds=args.max_idle_rounds,
         login_wait_rounds=args.login_wait_rounds,
         max_response_parse_retries=args.max_response_parse_retries,
+        progress=print_progress,
     )
 
     # Determine output path: data/<channel_name>/douyin_posts.json by default.
@@ -91,6 +96,7 @@ async def main_async() -> None:
         channel_dir.mkdir(parents=True, exist_ok=True)
         output_file = channel_dir / "douyin_posts.json"
     output_file.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[posts] saved output={output_file}", file=sys.stderr, flush=True)
 
     summary = result.get("summary", {})
     print(
